@@ -15,7 +15,7 @@ This is a hard query: it is broad, spans many documents, needs freshness ("last 
 
 | # | Deliverable | File |
 |---|-------------|------|
-| 1 | Architecture diagram | This README (Mermaid flowchart below) |
+| 1 | Architecture diagram | This README (Mermaid flowchart below + original hand-drawn sketch) |
 | 2 | Written system design document | [docs/01-system-design.md](docs/01-system-design.md) |
 | 3 | Trade-off analysis | [docs/02-trade-offs.md](docs/02-trade-offs.md) |
 | 4 | Failure mode analysis | [docs/03-failure-modes.md](docs/03-failure-modes.md) |
@@ -23,55 +23,92 @@ This is a hard query: it is broad, spans many documents, needs freshness ("last 
 
 ## Architecture
 
+Primary architecture — recreated faithfully as a Mermaid flowchart from the hand-drawn design sketch ([original sketch](docs/architecture-sketch.jpg)):
+
 ```mermaid
 flowchart TB
-    subgraph Input["Query Input"]
-        Q["Employee query:<br/>“Summarize all company initiatives<br/>related to personalization and<br/>recommendation systems<br/>from the last 2 years”"]
-        ID["Identity & ACL context<br/>(user, groups, clearance)"]
-    end
+    User((Employee))
+    UI["<<UI>><br/>1. Enter Query<br/>2. View Summary (citations)"]
+    IAM[/"IAM"/]
+    Orch["Orchestrator<br/>(extract intent and delegate)"]
+    Gov["Central Governance Layer<br/>.Logger<br/>.Tracker"]
+    PLAN["PLAN"]
+    ACT["ACT"]
+    OBS["OBSERVE"]
+    Tools["Uniform Tool access"]
+    SecGate["Security Gate"]
+    SemStore[("Semantic Storage")]
+    Emb["Embeddings Server"]
+    Mem["Memory<br/>.working memory<br/>.Long term {Cache,<br/>Session, Episodic}"]
+    Ingest["INGESTION PIPELINES"]
+    Docs["Documents"]
+    Wiki["wiki"]
+    Notes["Meeting Notes"]
+    Reports["Project Reports"]
+    Specs["Product Specs"]
+    Roadmaps["Roadmaps"]
 
-    O["🧭 Orchestrator<br/>(Plan → Act → Observe loop)"]
-    P["📋 Hybrid Planner<br/>graph backbone for known flows<br/>+ LLM reasoning at decision nodes<br/>termination: goal met · step/depth limit<br/>· per-query budget cap · no-progress repeats"]
-    A["⚙️ Act — Tools & Retrieval<br/>typed tool schemas<br/>hybrid retrieval: BM25 + vector + recency<br/>+ cross-encoder rerank<br/>🔒 ACL pre-filter at retrieval<br/>(permission-scoped cache keys)"]
-    B["👁 Observe — Evaluate results<br/>sufficiency check · coverage gaps<br/>· evidence quality → refine plan or continue"]
-    S["📝 Synthesize — Cited report<br/>group initiatives by theme/team<br/>every claim anchored to a source<br/>cite-or-abstain: no evidence → abstain"]
-    D["📄 Delivered report<br/>+ audit log of sources"]
+    User --> UI
+    IAM --> UI
+    UI --> Orch
+    Orch -- "control" --> PLAN
+    PLAN --> ACT
+    ACT --> OBS
+    OBS -- "Replan / Continue" --> PLAN
+    OBS --> UI
+    ACT --> Tools
+    Tools --> SecGate
+    SecGate --> SemStore
+    Tools --> Emb
+    OBS <-.-> Mem
+    PLAN <-.-> Mem
+    Gov -.-> PLAN
+    Gov -.-> ACT
+    Gov -.-> OBS
+    Docs --> Ingest
+    Wiki --> Ingest
+    Notes --> Ingest
+    Reports --> Ingest
+    Specs --> Ingest
+    Roadmaps --> Ingest
+    Ingest --> SemStore
 
-    M[("🧠 Memory<br/>short-term: working plan,<br/>evidence log, conversation<br/>long-term: past queries,<br/>glossary, corrections")]
-    OB[("📊 Observability<br/>per-query trace & spans<br/>cost / latency / quality metrics<br/>replay & alerts")]
-
-    Q --> O
-    ID --> O
-    O --> P
-    P --> A
-    A --> B
-    B -->|gap found| P
-    B -->|sufficient| S
-    S --> D
-    O -.-> M
-    A -.-> M
-    S -.-> M
-    O -.-> OB
-    A -.-> OB
-    S -.-> OB
-
-    style Q fill:#e3f2fd,stroke:#1565c0
-    style ID fill:#fff3e0,stroke:#ef6c00
-    style O fill:#e8f5e9,stroke:#2e7d32
-    style P fill:#e8f5e9,stroke:#2e7d32
-    style A fill:#e8f5e9,stroke:#2e7d32
-    style B fill:#e8f5e9,stroke:#2e7d32
-    style S fill:#e8f5e9,stroke:#2e7d32
-    style D fill:#e1f5fe,stroke:#0277bd
-    style M fill:#f3e5f5,stroke:#7b1fa2
-    style OB fill:#fff8e1,stroke:#f9a825
+    style IAM fill:#fff3e0,stroke:#ef6c00
+    style UI fill:#e3f2fd,stroke:#1565c0
+    style Orch fill:#e8f5e9,stroke:#2e7d32
+    style PLAN fill:#e8f5e9,stroke:#2e7d32
+    style ACT fill:#e8f5e9,stroke:#2e7d32
+    style OBS fill:#e8f5e9,stroke:#2e7d32
+    style Gov fill:#f3e5f5,stroke:#7b1fa2,stroke-dasharray: 5 5
+    style Mem fill:#f3e5f5,stroke:#7b1fa2
+    style SecGate fill:#ffebee,stroke:#c62828
+    style Tools fill:#fff8e1,stroke:#f9a825
+    style SemStore fill:#e1f5fe,stroke:#0277bd
+    style Emb fill:#e1f5fe,stroke:#0277bd
+    style Ingest fill:#efebe9,stroke:#4e342e
 ```
 
-**How the example query flows through the system:** the employee's query and identity context enter the Orchestrator, which plans a research strategy (decompose into sub-queries like "personalization initiatives 2024–2026", "recommendation systems projects", "relevant teams and launches"). Each Act step retrieves documents through ACL-pre-filtered hybrid search; Observe checks whether the evidence covers the two-year window and the themes adequately, looping back to refine the plan when gaps remain. Synthesis then produces a grouped, cited report — and any claim that cannot be anchored to retrieved evidence is dropped rather than hallucinated.
+![Original hand-drawn architecture sketch](docs/architecture-sketch.jpg)
+
+**Component name map** — how the sketch's boxes map to the design document's components:
+
+| Sketch component | Design doc coverage |
+|---|---|
+| IAM | Authentication & identity — authenticated users only see authorized information ([01-system-design.md](docs/01-system-design.md)) |
+| Orchestrator (extract intent and delegate) | §3.1 Orchestrator + §3.2 Hybrid planner |
+| Central Governance Layer (.Logger, .Tracker) | Observability & traceability ([04-production-operations.md](docs/04-production-operations.md)) |
+| PLAN → ACT → OBSERVE loop | Plan → Act → Observe (§2, §4.1), Replan/Continue on coverage gaps |
+| Uniform Tool access | §3.5 Typed tool schemas |
+| Security Gate | §3.4 ACL permission filter — pre-filter at retrieval, never post-filter |
+| Semantic Storage + Embeddings Server | §3.3 Retrieval pipeline — hybrid BM25 + vector index with permission-scoped cache keys |
+| Memory (working + long-term {Cache, Session, Episodic}) | §3.6 Short-term vs long-term memory; session memory powers follow-up queries |
+| INGESTION PIPELINES | Ingestion: parse → clean → chunk with metadata (source, author, team, timestamp, ACL) |
+
+**How the example query flows through the system:** the employee authenticates via IAM and enters the query in the UI; the Orchestrator extracts intent and delegates to the PLAN → ACT → OBSERVE loop. Each Act step goes through Uniform Tool access and the Security Gate, retrieving only ACL-authorized documents from Semantic Storage. Observe checks whether the evidence covers the two-year window and the themes adequately, looping back to replan when gaps remain. The cited summary returns to the UI, the Central Governance Layer logs every step for traceability, and Memory retains session context so follow-up queries ("what about the mobile team?") reuse prior evidence.
 
 ## Design principles
 
-1. **Security is structural, not a filter.** Permissions are enforced at retrieval time (ACL pre-filter), never as a post-processing pass.
+1. **Security is structural, not a filter.** Permissions are enforced at retrieval time (Security Gate / ACL pre-filter), never as a post-processing pass.
 2. **Every claim is earned.** The synthesis engine cites sources or abstains — there is no uncited text in a delivered report.
 3. **Bounded autonomy.** The agent plans and acts freely *within* a termination envelope: step/depth limits, a per-query cost budget, and no-progress detection.
 4. **External content is data, never instructions.** Retrieved documents are treated as untrusted data; prompt-injection defenses are built into every stage.
